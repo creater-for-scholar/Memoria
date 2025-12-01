@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Memoria</title>
+    
+    <!-- React & DOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Recharts dependencies -->
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            bg: '#121212',
+                            card: '#1e1e1e',
+                            text: '#e0e0e0',
+                            muted: '#a0a0a0',
+                            border: '#333333'
+                        },
+                        brand: {
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            900: '#1e3a8a'
+                        }
+                    },
+                    animation: {
+                        'fire': 'fire 1.5s ease-in-out infinite alternate',
+                        'slide-in': 'slideIn 0.3s ease-out',
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+                    },
+                    keyframes: {
+                        fire: {
+                            '0%': { textShadow: '0 0 4px #ff0000, 0 0 10px #ff8800' },
+                            '100%': { textShadow: '0 0 10px #ff0000, 0 0 20px #ff8800, 0 0 30px #ffff00' }
+                        },
+                        slideIn: {
+                            '0%': { transform: 'translateY(20px)', opacity: '0' },
+                            '100%': { transform: 'translateY(0)', opacity: '1' }
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Charts -->
+    <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.2/umd/Recharts.min.js"></script>
+
+    <!-- Firebase -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, getDocs, getDoc, doc, updateDoc, setDoc, query, where, deleteDoc, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // Environment Variables (Critical for Permissions)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Make Firebase available globally
+        window.firebaseApp = {
+            auth,
+            db,
+            modules: {
+                signInAnonymously,
+                signInWithCustomToken,
+                onAuthStateChanged,
+                GoogleAuthProvider,
+                linkWithPopup,
+                signOut,
+                collection,
+                addDoc,
+                getDocs,
+                getDoc,
+                doc,
+                updateDoc,
+                setDoc,
+                query,
+                where,
+                deleteDoc,
+                orderBy,
+                limit
+            },
+            appId,
+            initialAuthToken
+        };
+
+        // Notify React that Firebase is ready
+        window.dispatchEvent(new Event('firebase-ready'));
+    </script>
+
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Glassmorphism */
+        .glass { background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.3); }
+        .dark .glass { background: rgba(30, 30, 30, 0.7); border: 1px solid rgba(255,255,255,0.05); }
+        
+        /* 3D Flip Card */
+        .perspective-1000 { perspective: 1000px; }
+        .transform-style-3d { transform-style: preserve-3d; }
+        .backface-hidden { backface-visibility: hidden; }
+        .rotate-y-180 { transform: rotateY(180deg); }
+        
+        /* Utility */
+        .tap-highlight-transparent { -webkit-tap-highlight-color: transparent; }
+    </style>
+</head>
+<body class="bg-gray-100 dark:bg-dark-bg text-gray-900 dark:text-dark-text transition-colors duration-300 min-h-screen selection:bg-brand-500 selection:text-white">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef, useCallback } = React;
+        
+        // Recharts Fallback
+        const RechartsObj = window.Recharts || { 
+            BarChart: () => null, Bar: () => null, XAxis: () => null, 
+            CartesianGrid: () => null, Tooltip: () => null, ResponsiveContainer: ({children}) => <div>{children}</div> 
+        };
+        const { BarChart, Bar, XAxis, CartesianGrid, Tooltip, ResponsiveContainer } = RechartsObj;
+
+        // --- Utils ---
+        const generateId = () => Math.random().toString(36).substr(2, 9);
+        const getToday = () => new Date().toISOString().split('T')[0];
+        
+        // CSV Parser: Handles quoted fields somewhat robustly
+        const parseCSVLine = (text) => {
+            const result = [];
+            let cell = '';
+            let inQuotes = false;
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+                if (char === '"') {
+                    inQuotes = !inQuotes;
+                } else if (char === ',' && !inQuotes) {
+                    result.push(cell.trim());
+                    cell = '';
+                } else {
+                    cell += char;
+                }
+            }
+            result.push(cell.trim());
+            return result.map(c => c.replace(/^"|"$/g, '').replace(/""/g, '"'));
+        };
+
+        // --- Components ---
+        const Icon = ({ name, size = 24, className }) => {
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
+            return <i data-lucide={name} width={size} height={size} className={className}></i>;
+        };
+
+        const LoadingSpinner = () => (
+            <div className="flex justify-center items-center p-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-500"></div>
+            </div>
+        );
+
+        // --- Main Application ---
+        const App = () => {
+            // State
+            const [user, setUser] = useState(null);
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [view, setView] = useState('dashboard');
+            const [decks, setDecks] = useState([]);
+            const [activeDeckId, setActiveDeckId] = useState(null);
+            const [studyQueue, setStudyQueue] = useState([]);
+            const [studyModeConfig, setStudyModeConfig] = useState({ mode: 'sm2' }); // sm2 or random_all
+            const [settings, setSettings] = useState({
+                darkMode: true,
+                oniMode: false,
+                shuffle: false,
+                ttsEnabled: true,
+                soundEnabled: true
+            });
+            const [streak, setStreak] = useState(0);
+            const [notifications, setNotifications] = useState([]);
+            const fileInputRef = useRef(null);
+
+            // --- Initialization & Auth ---
+            useEffect(() => {
+                const initApp = async () => {
+                    if (!window.firebaseApp) return;
+                    const { auth, modules, initialAuthToken } = window.firebaseApp;
+
+                    try {
+                        // Priority 1: Custom Token (from environment)
+                        if (initialAuthToken) {
+                            await modules.signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            // Priority 2: Anonymous (fallback)
+                            // Only if not already signed in
+                            if (!auth.currentUser) {
+                                await modules.signInAnonymously(auth);
+                            }
+                        }
+                    } catch (e) {
+                        console.error("Auth init error:", e);
+                    }
+
+                    // Auth Listener
+                    modules.onAuthStateChanged(auth, async (u) => {
+                        setUser(u);
+                        setIsAuthReady(true);
+                        if (u) {
+                            await syncData(u.uid);
+                        }
+                    });
+                };
+
+                if (window.firebaseApp) {
+                    initApp();
+                } else {
+                    window.addEventListener('firebase-ready', initApp);
+                }
+                
+                // Theme Init
+                if (settings.darkMode) document.documentElement.classList.add('dark');
+
+                // LocalStorage Load
+                const localDecks = JSON.parse(localStorage.getItem('memoria_decks') || '[]');
+                const localSettings = JSON.parse(localStorage.getItem('memoria_settings') || '{}');
+                
+                if (localDecks.length > 0) setDecks(localDecks);
+                setSettings(prev => ({...prev, ...localSettings}));
+
+                // Streak Logic
+                const lastLogin = localStorage.getItem('last_login');
+                const currentStreak = parseInt(localStorage.getItem('streak') || '0');
+                const today = getToday();
+                if (lastLogin !== today) {
+                    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+                    if (lastLogin === yesterday) {
+                        setStreak(currentStreak + 1);
+                        localStorage.setItem('streak', currentStreak + 1);
+                    } else {
+                        setStreak(1);
+                        localStorage.setItem('streak', 1);
+                    }
+                    localStorage.setItem('last_login', today);
+                } else {
+                    setStreak(currentStreak);
+                }
+
+                return () => window.removeEventListener('firebase-ready', initApp);
+            }, []);
+
+            // Theme Toggle Effect
+            useEffect(() => {
+                if (settings.darkMode) document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+            }, [settings.darkMode]);
+
+            // Persistence
+            useEffect(() => {
+                localStorage.setItem('memoria_decks', JSON.stringify(decks));
+                localStorage.setItem('memoria_settings', JSON.stringify(settings));
+                
+                // Cloud Sync (Debounced)
+                const timer = setTimeout(() => {
+                    if (isAuthReady && user) saveToCloud();
+                }, 3000);
+                return () => clearTimeout(timer);
+            }, [decks, settings, user, isAuthReady]);
+
+            // Icon Refresh
+            useEffect(() => { if(window.lucide) window.lucide.createIcons(); }, [view, decks]);
+
+            // --- Core Functions ---
+
+            const showNotification = (msg) => {
+                const id = Date.now();
+                setNotifications(prev => [...prev, { id, msg }]);
+                setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 3000);
+            };
+
+            const syncData = async (uid) => {
+                if (!window.firebaseApp) return;
+                const { db, modules, appId } = window.firebaseApp;
+                try {
+                    // Correct path: /artifacts/{appId}/users/{uid}/data/userData
+                    const docRef = modules.doc(db, 'artifacts', appId, 'users', uid, 'data', 'userData');
+                    const docSnap = await modules.getDoc(docRef);
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        // Merge strategy: prioritize cloud if exists, else keep local
+                        if (data.decks && data.decks.length > 0) setDecks(data.decks);
+                        if (data.settings) setSettings(data.settings);
+                        showNotification("データを同期しました");
+                    }
+                } catch(e) { console.error("Sync error", e); }
+            };
+
+            const saveToCloud = async () => {
+                if (!window.firebaseApp || !user) return;
+                const { db, modules, appId } = window.firebaseApp;
+                try {
+                    const docRef = modules.doc(db, 'artifacts', appId, 'users', user.uid, 'data', 'userData');
+                    await modules.setDoc(docRef, {
+                        uid: user.uid,
+                        decks,
+                        settings,
+                        lastUpdated: new Date().toISOString()
+                    }, { merge: true });
+                } catch(e) { console.error("Save error", e); }
+            };
+
+            const importData = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const text = event.target.result;
+                    let newCards = [];
+                    
+                    if (file.name.endsWith('.csv') || file.name.endsWith('.txt')) {
+                        const lines = text.split('\n');
+                        newCards = lines.map(line => {
+                            if (!line.trim()) return null;
+                            // Parse: No, 単語, 意味, 例文, 例文の和訳, 絵文字
+                            const parts = parseCSVLine(line);
+                            if (parts.length < 2) return null; // At least Term and Def required
+                            
+                            // Map columns strictly
+                            return {
+                                id: generateId(),
+                                number: parts[0] || "",
+                                term: parts[1] || "",
+                                definition: parts[2] || "",
+                                example: parts[3] || "",
+                                exampleTr: parts[4] || "",
+                                emoji: parts[5] || "📝",
+                                sm2: { interval: 0, repetition: 0, ef: 2.5 },
+                                status: 'new',
+                                created: getToday()
+                            };
+                        }).filter(Boolean);
+                    } else {
+                        // Dummy for PDF/Word
+                        newCards = [{ id: generateId(), term: "Imported File", definition: file.name, status: 'new', sm2: {interval:0, repetition:0, ef:2.5} }];
+                        showNotification("現在、PDF/Wordはファイル名のインポートのみサポートしています。");
+                    }
+
+                    if (newCards.length > 0) {
+                        const newDeck = {
+                            id: generateId(),
+                            title: file.name.split('.')[0] || "New Deck",
+                            cards: newCards,
+                            created: getToday()
+                        };
+                        setDecks([...decks, newDeck]);
+                        showNotification(`${newCards.length}枚のカードをインポートしました`);
+                    } else {
+                        showNotification("有効なデータが見つかりませんでした");
+                    }
+                };
+                reader.readAsText(file);
+            };
+
+            const startSession = (deckId, mode = 'sm2') => {
+                const deck = decks.find(d => d.id === deckId);
+                if (!deck || deck.cards.length === 0) return showNotification("カードがありません");
+
+                let queue = [];
+                const now = getToday();
+
+                if (mode === 'random_all') {
+                    // First time / Assessment mode
+                    queue = [...deck.cards].sort(() => Math.random() - 0.5);
+                } else {
+                    // SM-2 Mode
+                    const dueCards = deck.cards.filter(c => c.nextReview && c.nextReview <= now && c.status !== 'archived');
+                    const newCards = deck.cards.filter(c => !c.nextReview && c.status !== 'archived');
+                    
+                    // Priority: Forgotten (handled via SM2 dates) > Due > New
+                    queue = [...dueCards, ...newCards];
+                    
+                    if (settings.shuffle) {
+                        queue.sort(() => Math.random() - 0.5);
+                    } else {
+                        // Sort by Due Date
+                        queue.sort((a, b) => {
+                             if (!a.nextReview) return 1;
+                             if (!b.nextReview) return -1;
+                             return a.nextReview.localeCompare(b.nextReview);
+                        });
+                    }
+                }
+
+                if (queue.length === 0) return showNotification("復習するカードがありません。お疲れ様でした！");
+
+                setStudyQueue(queue);
+                setActiveDeckId(deckId);
+                setStudyModeConfig({ mode });
+                setView('study');
+            };
+
+            // SM-2 Logic
+            const processAnswer = (card, quality) => {
+                // quality: 0=Forgot, 1=Hard, 2=Good, 3=Perfect
+                let { interval, repetition, ef } = card.sm2 || { interval: 0, repetition: 0, ef: 2.5 };
+                
+                // If Perfect, archive
+                if (quality === 3) {
+                    updateCard(card.id, { ...card, status: 'archived', lastReview: getToday(), nextReview: null });
+                    return null; // Don't requeue
+                }
+
+                // Calculate EF
+                const qMap = { 2: 4, 1: 3, 0: 0 };
+                const q = qMap[quality];
+                let newEf = ef + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
+                if (newEf < 1.3) newEf = 1.3;
+
+                // Calculate Interval
+                let nextQueueOffset = null; // for session requeue
+                
+                if (quality === 0) { // Forgot
+                    repetition = 0;
+                    interval = 1;
+                    nextQueueOffset = 20; // Requeue 20 cards later
+                } else if (quality === 1) { // Hard
+                    repetition = 0;
+                    interval = 1;
+                } else { // Good
+                    if (repetition === 0) interval = 1;
+                    else if (repetition === 1) interval = 2; // Fixed 2 days
+                    else interval = Math.round(interval * newEf);
+                    repetition += 1;
+                }
+
+                // Determine Next Date
+                const nextDateObj = new Date();
+                nextDateObj.setDate(nextDateObj.getDate() + interval);
+                const nextDate = nextDateObj.toISOString().split('T')[0];
+
+                const updatedCard = {
+                    ...card,
+                    sm2: { interval, repetition, ef: newEf },
+                    lastReview: getToday(),
+                    nextReview: nextQueueOffset ? null : nextDate,
+                    status: 'learning'
+                };
+
+                // Update Deck
+                updateCard(card.id, updatedCard);
+                
+                return nextQueueOffset ? updatedCard : null;
+            };
+
+            const updateCard = (cardId, updatedCard) => {
+                setDecks(prev => prev.map(d => {
+                    if (d.id !== activeDeckId) return d;
+                    return { ...d, cards: d.cards.map(c => c.id === cardId ? updatedCard : c) };
+                }));
+            };
+
+            const publishDeck = async (deck) => {
+                if (!window.firebaseApp || !user) return showNotification("ログインが必要です");
+                const { db, modules, appId } = window.firebaseApp;
+                try {
+                    // Correct path: /artifacts/{appId}/public/data/public_decks
+                    const colRef = modules.collection(db, 'artifacts', appId, 'public', 'data', 'public_decks');
+                    
+                    // Simplify cards for public
+                    const publicCards = deck.cards.map(c => ({
+                        number: c.number, term: c.term, definition: c.definition, 
+                        example: c.example, exampleTr: c.exampleTr, emoji: c.emoji
+                    }));
+
+                    await modules.addDoc(colRef, {
+                        title: deck.title,
+                        cards: publicCards,
+                        authorName: user.isAnonymous ? "匿名ユーザー" : (user.email || "ユーザー"),
+                        authorId: user.uid,
+                        publishedAt: new Date().toISOString(),
+                        cardCount: publicCards.length
+                    });
+                    showNotification("単語帳を公開しました！");
+                } catch(e) { 
+                    console.error(e);
+                    showNotification("公開エラー: " + e.message); 
+                }
+            };
+
+            // --- Stats Logic ---
+            const weeklyStats = useMemo(() => {
+                const counts = { 'Mon':0, 'Tue':0, 'Wed':0, 'Thu':0, 'Fri':0, 'Sat':0, 'Sun':0 };
+                const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                
+                decks.forEach(d => d.cards.forEach(c => {
+                    if (c.lastReview) {
+                        const date = new Date(c.lastReview);
+                        const dayName = days[date.getDay()];
+                        // Only count if within last 7 days? For simplicity, we assume accurate recent data
+                        // In real app, check date diff. Here we just map day name for demo visualization
+                        counts[dayName] = (counts[dayName] || 0) + 1; 
+                    }
+                }));
+                
+                return Object.keys(counts).map(day => ({ name: day, count: counts[day] }));
+            }, [decks]);
+
+
+            // --- Views ---
+
+            const DashboardView = () => (
+                <div className="pb-24 p-4 max-w-2xl mx-auto">
+                    <header className="flex justify-between items-center mb-6 pt-2">
+                        <div>
+                            <h1 className="text-3xl font-black bg-gradient-to-r from-brand-500 to-purple-600 bg-clip-text text-transparent">
+                                Memoria
+                            </h1>
+                            <p className="text-xs text-dark-muted font-mono mt-1">
+                                {isAuthReady ? (user?.isAnonymous ? "Guest Mode" : "Synced") : "Connecting..."}
+                            </p>
+                        </div>
+                        <div className={`text-center ${streak >= 3 ? 'animate-fire text-orange-500' : 'text-gray-500'}`}>
+                            <div className="text-3xl font-bold font-mono">{streak}</div>
+                            <div className="text-[10px] uppercase tracking-wider">Day Streak</div>
+                        </div>
+                    </header>
+
+                    {/* Stats Summary */}
+                    <div className="grid grid-cols-2 gap-3 mb-6">
+                        <div className="glass p-4 rounded-2xl dark:border-dark-border">
+                            <div className="text-dark-muted text-xs uppercase font-bold mb-1">Total Cards</div>
+                            <div className="text-2xl font-bold dark:text-white">
+                                {decks.reduce((a, d) => a + d.cards.length, 0)}
+                            </div>
+                        </div>
+                        <div className="glass p-4 rounded-2xl dark:border-dark-border">
+                            <div className="text-brand-500 text-xs uppercase font-bold mb-1">Due Today</div>
+                            <div className="text-2xl font-bold text-brand-500">
+                                {decks.reduce((a, d) => a + d.cards.filter(c => c.nextReview && c.nextReview <= getToday()).length, 0)}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Decks */}
+                    <div className="space-y-4">
+                        <div className="flex justify-between items-center px-1">
+                            <h2 className="text-xl font-bold dark:text-white">Your Decks</h2>
+                            <button onClick={() => setView('create')} className="p-2 bg-brand-600 text-white rounded-full shadow-lg active:scale-95 transition">
+                                <Icon name="plus" size={20} />
+                            </button>
+                        </div>
+                        
+                        {decks.length === 0 ? (
+                            <div className="text-center py-12 border-2 border-dashed border-gray-300 dark:border-dark-border rounded-2xl">
+                                <p className="text-gray-400 mb-4">No decks found</p>
+                                <button onClick={() => fileInputRef.current.click()} className="text-brand-500 font-bold px-4 py-2 bg-brand-500/10 rounded-lg">
+                                    Import CSV
+                                </button>
+                            </div>
+                        ) : (
+                            decks.map(deck => (
+                                <div key={deck.id} 
+                                    onClick={() => startSession(deck.id)}
+                                    className="glass group relative p-5 rounded-2xl border-transparent hover:border-brand-500 transition-all active:scale-[0.98] cursor-pointer dark:bg-dark-card"
+                                >
+                                    <div className="flex justify-between items-start mb-2">
+                                        <h3 className="font-bold text-lg dark:text-white truncate pr-16">{deck.title}</h3>
+                                        <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={(e) => { e.stopPropagation(); publishDeck(deck); }} className="p-2 bg-brand-100 dark:bg-brand-900/50 text-brand-600 rounded-lg">
+                                                <Icon name="share-2" size={16} />
+                                            </button>
+                                            <button onClick={(e) => { e.stopPropagation(); /* Edit logic placeholder */ }} className="p-2 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 rounded-lg">
+                                                <Icon name="more-horizontal" size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-4 text-sm text-dark-muted mb-4">
+                                        <span className="flex items-center gap-1"><Icon name="layers" size={14}/> {deck.cards.length}</span>
+                                        <span className="flex items-center gap-1"><Icon name="check-circle" size={14}/> {Math.round(deck.cards.filter(c => c.status === 'archived').length / deck.cards.length * 100 || 0)}%</span>
+                                    </div>
+
+                                    {/* Leither-style Progress Boxes */}
+                                    <div className="flex gap-1 h-2">
+                                        {[1,2,3,4,5].map(lvl => {
+                                            const count = deck.cards.filter(c => {
+                                                const ef = c.sm2?.ef || 2.5;
+                                                return ef >= (1.3 + (lvl-1)*0.3) && ef < (1.3 + lvl*0.3);
+                                            }).length;
+                                            const opacity = count > 0 ? 0.3 + (lvl * 0.15) : 0.1;
+                                            return <div key={lvl} className="flex-1 rounded-sm bg-brand-500" style={{ opacity }} />
+                                        })}
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            );
+
+            const StudyView = () => {
+                const [index, setIndex] = useState(0);
+                const [isFlipped, setIsFlipped] = useState(false);
+                const [showFeedback, setShowFeedback] = useState(false);
+                const card = studyQueue[0];
+
+                // Auto TTS
+                useEffect(() => {
+                    if (card && settings.ttsEnabled && !isFlipped) {
+                        const text = settings.oniMode ? card.definition : card.term;
+                        const lang = settings.oniMode ? 'ja-JP' : 'en-US';
+                        const u = new SpeechSynthesisUtterance(text);
+                        u.lang = lang;
+                        window.speechSynthesis.speak(u);
+                    }
+                }, [card, isFlipped]);
+
+                if (!card) return null;
+
+                const handleFeedback = (quality) => {
+                    const requeueCard = processAnswer(card, quality);
+                    
+                    let nextQueue = studyQueue.slice(1);
+                    if (requeueCard) {
+                        // Insert 20 cards later or at end
+                        const insertPos = Math.min(20, nextQueue.length);
+                        nextQueue.splice(insertPos, 0, requeueCard);
+                    }
+                    
+                    if (nextQueue.length === 0) {
+                        showNotification("Session Complete!");
+                        setView('dashboard');
+                    } else {
+                        setStudyQueue(nextQueue);
+                        setIsFlipped(false);
+                        setShowFeedback(false);
+                    }
+                };
+
+                const toggleFlip = () => {
+                    setIsFlipped(!isFlipped);
+                    if (!isFlipped) setShowFeedback(true);
+                };
+
+                // Oni Mode Logic
+                const frontMain = settings.oniMode ? card.definition : card.term;
+                const frontSub = settings.oniMode ? "(意味)" : `No.${card.number || '-'}`;
+                
+                const backMain = settings.oniMode ? card.term : card.definition;
+                const backSub = settings.oniMode ? "単語" : "意味";
+
+                return (
+                    <div className="h-screen flex flex-col bg-gray-50 dark:bg-black">
+                        {/* Header */}
+                        <div className="flex justify-between items-center p-4">
+                            <button onClick={() => setView('dashboard')} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-800 dark:text-white">
+                                <Icon name="x" />
+                            </button>
+                            <div className="flex items-center gap-3">
+                                <span className="font-mono text-sm dark:text-gray-400">{studyQueue.length} left</span>
+                                <button onClick={() => setSettings(s => ({...s, shuffle: !s.shuffle}))} className={`p-2 rounded-full transition-colors ${settings.shuffle ? 'bg-brand-500 text-white' : 'bg-gray-200 dark:bg-gray-800 dark:text-gray-400'}`}>
+                                    <Icon name="shuffle" size={18} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Card Container */}
+                        <div className="flex-1 flex items-center justify-center p-6 perspective-1000" onClick={toggleFlip}>
+                            <div className={`relative w-full max-w-md aspect-[3/4] transition-transform duration-500 transform-style-3d cursor-pointer ${isFlipped ? 'rotate-y-180' : ''}`}>
+                                
+                                {/* Front Side */}
+                                <div className="absolute inset-0 backface-hidden bg-white dark:bg-dark-card rounded-3xl shadow-2xl border dark:border-dark-border flex flex-col items-center justify-center p-8 text-center">
+                                    <span className="absolute top-6 left-6 text-xs font-bold text-gray-400 uppercase tracking-widest">{frontSub}</span>
+                                    {/* Removed Emoji from front based on request */}
+                                    <h2 className="text-4xl font-bold dark:text-white leading-tight break-words w-full">{frontMain}</h2>
+                                    <p className="mt-8 text-sm text-gray-400 animate-pulse">Tap to flip</p>
+                                </div>
+
+                                {/* Back Side */}
+                                <div className="absolute inset-0 backface-hidden rotate-y-180 bg-white dark:bg-dark-card rounded-3xl shadow-2xl border dark:border-dark-border flex flex-col p-8 text-left overflow-y-auto no-scrollbar">
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <span className="text-xs font-bold text-brand-500 uppercase tracking-widest">{backSub}</span>
+                                        {/* Emoji now on the back */}
+                                        {!settings.oniMode && <span className="text-xl">{card.emoji}</span>}
+                                    </div>
+                                    
+                                    <h2 className="text-3xl font-bold dark:text-white mb-6 border-b dark:border-gray-700 pb-4">{backMain}</h2>
+
+                                    {/* CSV Columns: 例文, 例文の和訳 */}
+                                    <div className="space-y-4">
+                                        {card.example && (
+                                            <div>
+                                                <h4 className="text-xs text-gray-500 mb-1">EXAMPLE</h4>
+                                                <p className="text-lg text-gray-800 dark:text-gray-200 leading-relaxed font-serif italic">"{card.example}"</p>
+                                            </div>
+                                        )}
+                                        {card.exampleTr && (
+                                            <div>
+                                                <h4 className="text-xs text-gray-500 mb-1">TRANSLATION</h4>
+                                                <p className="text-sm text-gray-600 dark:text-gray-400">{card.exampleTr}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Controls */}
+                        <div className={`p-6 transition-all duration-300 transform ${showFeedback ? 'translate-y-0 opacity-100' : 'translate-y-10 opacity-0 pointer-events-none'}`}>
+                            <div className="flex gap-3 max-w-md mx-auto">
+                                <button onClick={(e) => { e.stopPropagation(); handleFeedback(0); }} className="flex-1 py-4 rounded-xl bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 font-bold flex flex-col items-center gap-1 active:scale-95 transition">
+                                    <span>Forgot</span>
+                                    <span className="text-[10px] opacity-70">Soon</span>
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); handleFeedback(1); }} className="flex-1 py-4 rounded-xl bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 font-bold flex flex-col items-center gap-1 active:scale-95 transition">
+                                    <span>Hard</span>
+                                    <span className="text-[10px] opacity-70">1d</span>
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); handleFeedback(2); }} className="flex-1 py-4 rounded-xl bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 font-bold flex flex-col items-center gap-1 active:scale-95 transition">
+                                    <span>Good</span>
+                                    <span className="text-[10px] opacity-70">2d</span>
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); handleFeedback(3); }} className="flex-1 py-4 rounded-xl bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 font-bold flex flex-col items-center gap-1 active:scale-95 transition">
+                                    <span>Perfect</span>
+                                    <span className="text-[10px] opacity-70">Archive</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            };
+
+            const MarketView = () => {
+                const [publicDecks, setPublicDecks] = useState([]);
+                const [loading, setLoading] = useState(true);
+
+                useEffect(() => {
+                    const fetch = async () => {
+                        if (!window.firebaseApp) return;
+                        const { db, modules, appId } = window.firebaseApp;
+                        try {
+                            const q = modules.query(
+                                modules.collection(db, 'artifacts', appId, 'public', 'data', 'public_decks'),
+                                modules.orderBy('publishedAt', 'desc'),
+                                modules.limit(20)
+                            );
+                            const snap = await modules.getDocs(q);
+                            setPublicDecks(snap.docs.map(d => ({id: d.id, ...d.data()})));
+                        } catch(e) { console.error(e); } finally { setLoading(false); }
+                    };
+                    fetch();
+                }, []);
+
+                return (
+                    <div className="pb-24 p-4 max-w-2xl mx-auto">
+                        <h2 className="text-2xl font-bold mb-4 dark:text-white">Community</h2>
+                        {loading ? <LoadingSpinner/> : (
+                            <div className="space-y-3">
+                                {publicDecks.map(d => (
+                                    <div key={d.id} className="glass p-4 rounded-xl flex justify-between items-center dark:bg-dark-card">
+                                        <div>
+                                            <h3 className="font-bold dark:text-white">{d.title}</h3>
+                                            <p className="text-xs text-dark-muted">{d.cardCount} cards • by {d.authorName}</p>
+                                        </div>
+                                        <button 
+                                            onClick={() => {
+                                                setDecks([...decks, { ...d, id: generateId(), cards: d.cards.map(c => ({...c, sm2:{interval:0,repetition:0,ef:2.5}, status:'new'})), created: getToday() }]);
+                                                showNotification("Downloaded!");
+                                            }}
+                                            className="px-4 py-2 bg-brand-500 text-white rounded-lg text-sm font-bold"
+                                        >
+                                            Get
+                                        </button>
+                                    </div>
+                                ))}
+                                {publicDecks.length === 0 && <p className="text-center text-dark-muted">No public decks yet.</p>}
+                            </div>
+                        )}
+                    </div>
+                );
+            };
+
+            const SettingsView = () => (
+                <div className="pb-24 p-4 max-w-2xl mx-auto space-y-6">
+                    <h2 className="text-2xl font-bold dark:text-white">Settings</h2>
+                    
+                    {/* Toggles */}
+                    <div className="glass rounded-2xl overflow-hidden dark:bg-dark-card">
+                        {[
+                            { label: 'Dark Mode', key: 'darkMode' },
+                            { label: 'Oni Mode (Reverse)', key: 'oniMode' },
+                            { label: 'Auto TTS', key: 'ttsEnabled' }
+                        ].map((item, i) => (
+                            <div key={item.key} className={`flex justify-between items-center p-4 ${i!==2 ? 'border-b dark:border-gray-800' : ''}`}>
+                                <span className="dark:text-white font-medium">{item.label}</span>
+                                <button 
+                                    onClick={() => setSettings({...settings, [item.key]: !settings[item.key]})}
+                                    className={`w-12 h-7 rounded-full p-1 transition-colors duration-300 ${settings[item.key] ? 'bg-brand-500' : 'bg-gray-300 dark:bg-gray-700'}`}
+                                >
+                                    <div className={`w-5 h-5 bg-white rounded-full shadow-md transition-transform duration-300 ${settings[item.key] ? 'translate-x-5' : ''}`}/>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Data Actions */}
+                    <div className="space-y-3">
+                        <button onClick={() => fileInputRef.current.click()} className="w-full p-4 glass rounded-xl flex items-center gap-3 text-brand-600 font-bold active:scale-[0.98] transition dark:bg-dark-card">
+                            <Icon name="upload" /> Import CSV / Text
+                        </button>
+                        
+                        <div className="p-4 glass rounded-xl dark:bg-dark-card">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Icon name="cloud" className={isAuthReady && user && !user.isAnonymous ? "text-green-500" : "text-gray-400"} />
+                                <span className="font-bold dark:text-white">
+                                    {isAuthReady ? (user ? (user.isAnonymous ? "Guest (Local Only)" : user.email) : "Not Logged In") : "Loading..."}
+                                </span>
+                            </div>
+                            {user?.isAnonymous && (
+                                <button 
+                                    onClick={() => window.firebaseApp.modules.linkWithPopup(window.firebaseApp.auth, new window.firebaseApp.modules.GoogleAuthProvider())}
+                                    className="w-full mt-2 py-2 bg-brand-500 text-white rounded-lg text-sm font-bold"
+                                >
+                                    Connect Google Account
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                    
+                    <div className="text-center text-xs text-dark-muted pt-8">
+                        Memoria v2.0 - Optimized for iPad
+                    </div>
+                </div>
+            );
+            
+            const StatsView = () => (
+                 <div className="pb-24 p-4 max-w-2xl mx-auto space-y-6">
+                    <h2 className="text-2xl font-bold dark:text-white">Statistics</h2>
+                    <div className="h-64 glass p-4 rounded-2xl dark:bg-dark-card">
+                        <h3 className="text-sm font-bold text-dark-muted mb-4 uppercase">Activity</h3>
+                        <ResponsiveContainer width="100%" height="80%">
+                            <BarChart data={weeklyStats}>
+                                <CartesianGrid strokeDasharray="3 3" opacity={0.1} vertical={false} />
+                                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize:12, fill:'#888'}} dy={10} />
+                                <Tooltip 
+                                    cursor={{fill: 'rgba(255,255,255,0.1)'}}
+                                    contentStyle={{borderRadius:'8px', border:'none', background:'#333', color:'#fff'}}
+                                />
+                                <Bar dataKey="count" fill="#3b82f6" radius={[4,4,4,4]} barSize={20} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            );
+
+            // --- Navigation Bar ---
+            const Nav = () => (
+                <nav className="fixed bottom-0 w-full glass border-t border-gray-200 dark:border-gray-800 pb-safe pt-2 px-6 flex justify-between items-center z-50 dark:bg-dark-card/90">
+                    {[
+                        { id: 'dashboard', icon: 'home', label: 'Home' },
+                        { id: 'market', icon: 'globe', label: 'Market' },
+                        { id: 'stats', icon: 'bar-chart-2', label: 'Stats' },
+                        { id: 'settings', icon: 'settings', label: 'Settings' }
+                    ].map(item => (
+                        <button 
+                            key={item.id}
+                            onClick={() => setView(item.id)}
+                            className={`flex flex-col items-center gap-1 p-2 transition-colors ${view === item.id ? 'text-brand-500' : 'text-gray-400'}`}
+                        >
+                            <Icon name={item.icon} size={24} className={view === item.id ? "fill-current/20" : ""} />
+                            <span className="text-[10px] font-medium">{item.label}</span>
+                        </button>
+                    ))}
+                </nav>
+            );
+
+            return (
+                <div className="min-h-screen pb-safe-offset">
+                    <input type="file" ref={fileInputRef} onChange={importData} className="hidden" accept=".csv,.txt" />
+                    
+                    {/* Notifications */}
+                    <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-full max-w-sm px-4">
+                        {notifications.map(n => (
+                            <div key={n.id} className="bg-gray-900/90 dark:bg-white/90 backdrop-blur text-white dark:text-black px-4 py-3 rounded-xl shadow-xl text-sm font-bold animate-slide-in flex items-center justify-center">
+                                {n.msg}
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Main Content */}
+                    <main className={view === 'study' ? '' : 'pt-safe'}>
+                        {view === 'dashboard' && <DashboardView />}
+                        {view === 'study' && <StudyView />}
+                        {view === 'market' && <MarketView />}
+                        {view === 'stats' && <StatsView />}
+                        {view === 'settings' && <SettingsView />}
+                    </main>
+
+                    {view !== 'study' && <Nav />}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
